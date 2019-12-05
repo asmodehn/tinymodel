@@ -1,29 +1,23 @@
 """
-Module to represent categorical product of usable domain model language/concepts in python.
-# Should at least handle :
-# - classes
-# - dataclasses
-# All composed python/json datastructure/types (dicts? schemas?)
+Module to represent categorical sum of usable domain model language/concepts in python.
+# Should at least provide:
+- tagged unions
+# Maybe via a meta class changing the semantics of attributes in a class : there can be only one...
+# or a decorator, the co-dataclass semantics.
 """
-
 from __future__ import annotations
-
-import decimal
-import enum
 import functools
 import typing
 from pprint import pformat
 
-import hypothesis
-import hypothesis.strategies as strats
 from marshmallow import Schema
 
-from tinymodel.schemas.product import product as product_schema
+from tinymodel.schemas.union import union as union_schema
 
 
-class Product:
+class Union:
     """
-    >>> prod = Product(the_sentence='the answer is ', the_answer=42)
+    >>> prod = Union('the', 'answer', 'is', 42)
     42
     >>> repr(prod)
     42
@@ -36,9 +30,9 @@ class Product:
     #strategy: strats.SearchStrategy  # TODO ...
     value: typing.Dict[typing.Any]  # TODO : refine
 
-    def __init__(self, **kwargs: typing.Union[bytes, int, str, Product]):  # static type check for user code.
-        self.value = kwargs
-        self.field = product_schema(**kwargs)  # single dispatch based on value type to retrieve schema/field
+    def __init__(self, *args: typing.Union[bytes, int, str, Product, Union]):  # static type check for user code.
+        self.value = args
+        self.field = union_schema(*args)  # single dispatch based on value type to retrieve schema/field
 
     # NOTE : do not overload __call__ here, we should keep it available for user customization for his own behavior...
 
@@ -59,5 +53,5 @@ class Product:
 
 
 @functools.lru_cache(maxsize=128, typed=True)   # enforcing purity, and ensuring type distinction...
-def product(**kwargs: typing.Any):
-    return Product(**kwargs)
+def union(*args: typing.Any):
+    return Union(*args)

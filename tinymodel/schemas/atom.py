@@ -4,6 +4,8 @@ Should at least handle :
 - bytes
 - decimal (int and float are optimisations - careful with that)
 - str
+
+Note : These are mostly handled by the language implementer, traditionally
 """
 import decimal
 import enum
@@ -33,7 +35,3 @@ def _(model: bytes):
 def _(model: str):
     return fields.String
 
-
-if __name__ == '__main__':
-    import doctest
-    doctest.testmod()

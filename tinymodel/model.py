@@ -6,10 +6,11 @@ from tinydb import TinyDB, Query
 
 class TinyModel(Mapping):
 
-    def __init__(self, class_name, persist_db, schema):
-        self._schema = schema
+    def __init__(self, class_name, persist_db, schema = None):
+        self._schema = schema  # Note : if schema is None, it should be computed automagically
         self._persist = persist_db
         self._name = class_name
+
         self.table = persist_db.table(class_name, )
         self.idx = OrderedDict()  # some kind of cache ??
 

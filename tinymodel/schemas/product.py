@@ -5,19 +5,26 @@ Should at least handle :
 - dicts
 - classes (inc. slots)
 - dataclasses
+
+
+Note : These are mostly handled by the developer, traditionally
 """
 from functools import singledispatch
 
+from dataclasses import dataclass
+
+import marshmallow
 from marshmallow import fields
 
 
-@singledispatch
-def product():
-    pass
+def product(**model):
 
+    # delayed import
+    from .schema import schema
 
-@product.register()
-def _(model: tuple):  # or *args ???
-    return fields.Tuple
+    schema = type("", (marshmallow.Schema,), {
+        k: schema(v) for k, v in model.items()
+    })
+    return schema
 
 
