@@ -4,6 +4,13 @@ from collections import Mapping, OrderedDict
 from tinydb import TinyDB, Query
 
 
+"""
+Provides a Mapping interface to class instances, stored in tinydb.
+This implies that class __init__() are, semantically, purely functional.
+
+"""
+
+
 class TinyModel(Mapping):
 
     def __init__(self, class_name, persist_db, schema = None):

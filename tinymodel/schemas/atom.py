@@ -27,11 +27,6 @@ def _(model_int: int):
 
 
 @atom.register
-def _(model: bytes):
-    return fields.String
-
-
-@atom.register
 def _(model: str):
     return fields.String
 

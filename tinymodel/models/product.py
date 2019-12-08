@@ -19,26 +19,34 @@ import hypothesis.strategies as strats
 from marshmallow import Schema
 
 from tinymodel.schemas.product import product as product_schema
+from tinymodel.schemas.schema import schema
+
+# class Product:
+#     """
+#     >>> prod = Product(the_sentence='the answer is ', the_answer=42)
+#     42
+#     >>> repr(prod)
+#     42
+#     >>> str(prod)
+#     '42'
+#     """
+#     # TODO : put that in a small "invisible" data strucrture
+#     type: typing.Type[typing.Any]  #TODO : refine
+#     schema: Schema
+#     #strategy: strats.SearchStrategy  # TODO ...
+#     value: typing.Dict[typing.Any]  # TODO : refine
+#
+#     def __init__(self, value: typing.Any):  # static type check for user code.
+#         self.type = type(value)
+#         self.value = value
+#         self.schema = product_schema(value)  # single dispatch based on value type to retrieve schema/field
 
 
+
+# TODO : factor in with model...
 class Product:
-    """
-    >>> prod = Product(the_sentence='the answer is ', the_answer=42)
-    42
-    >>> repr(prod)
-    42
-    >>> str(prod)
-    '42'
-    """
-    # TODO : put that in a small "invisible" data strucrture
-    type: typing.Type[typing.Any]  #TODO : refine
-    schema: Schema
-    #strategy: strats.SearchStrategy  # TODO ...
-    value: typing.Dict[typing.Any]  # TODO : refine
 
-    def __init__(self, **kwargs: typing.Union[bytes, int, str, Product]):  # static type check for user code.
-        self.value = kwargs
-        self.field = product_schema(**kwargs)  # single dispatch based on value type to retrieve schema/field
+    value: typing.Any
 
     # NOTE : do not overload __call__ here, we should keep it available for user customization for his own behavior...
 
@@ -58,6 +66,28 @@ class Product:
         raise NotImplementedError
 
 
-@functools.lru_cache(maxsize=128, typed=True)   # enforcing purity, and ensuring type distinction...
-def product(**kwargs: typing.Any):
-    return Product(**kwargs)
+def product(*args):  # TODO : args ?
+
+    def wrapper(cls):
+
+        from tinymodel.models.model import model
+        # function registering itself, to mark the class as product via schema singledispatch
+        model.register(cls, product)
+
+        class Model(Product):
+
+            # TODO : put that in a small "invisible" data strucrture
+            schema: Schema
+            # strategy: strats.SearchStrategy  # TODO ...
+            value: cls  # TODO : refine
+
+            def __init__(self, value: cls):  # static type check for user code.
+                self.value = value
+                sch = product_schema(cls, cps=schema)  # single dispatch based on value type to retrieve schema/field
+                self.schema = sch()  # we instantiate the schema here
+
+            # NOTE : do not overload __call__ here, we should keep it available for user customization for his own behavior...
+
+        return Model
+
+    return wrapper
