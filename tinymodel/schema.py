@@ -45,9 +45,9 @@ def _(model_type: type):
                 # Note : we instantiate the marshmallow fields here
                 f.name: schema(f.type)() for f in dataclasses.fields(model_type)
             }
-            schema_fields.update({
-                'construct': marshmallow.post_load()(construct)
-            })
+            # schema_fields.update({
+            #     'construct': marshmallow.post_load()(construct)
+            # })
 
             schm = marshmallow.Schema.from_dict(schema_fields)
             # TODO : solve recursivity problem... (field of its own type...)
@@ -97,3 +97,9 @@ if __name__ == '__main__':
     assert isinstance(BobS._declared_fields.get('f1'), fields.Integer)
     assert isinstance(BobS._declared_fields.get('f2'), fields.String)
 
+    b = Bob(42, "bobby")
+    bs = BobS()
+    dumped = bs.dump(b)
+    assert dumped == {'f2': 'bobby', 'f1': 42}, dumped
+    loaded = Bob(**bs.load(dumped))
+    assert loaded == b, loaded
