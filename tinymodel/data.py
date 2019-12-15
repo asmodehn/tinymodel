@@ -23,6 +23,8 @@ from pprint import pformat
 from uuid import uuid4
 
 import dill
+import hypothesis
+import hypothesis.strategies as st
 import tinydb
 from marshmallow import fields
 from tinydb import TinyDB
@@ -152,49 +154,132 @@ def DynaMeta(impl: typing.Type[typing.Any], db: TinyDB):
                 return self.cache[item]
 
 
+
+
+class BaseData:
+    pass
+
+
+
+def observably_similar(a, b, dist=None):
+    """
+    Returns similarity under a distribution of arguments
+    :param a:
+    :param b:
+    :param dist:
+    :return:
+    """
+
+    strat = None
+
+    # picking a strategy based on a and exploring
+    if hasattr(a, 'index_domain'):
+        if a.index_domain == int:
+            if strat is None:
+                strat = hypothesis.strategies.integers()
+            adist = strat.map(a)
+        else:
+            raise NotImplementedError(f"Unknown index Domain: {a.index_domain}")
+    else:  # assumed constant
+        adist = None  # TODO: generate a dist of A
+
+    if hasattr(b, 'index_domain'):
+        if b.index_domain == int:
+            if strat is None:
+                strat = hypothesis.strategies.integers()
+            bdist = strat.map(a)
+        else:
+            raise NotImplementedError(f"Unknown index Domain: {b.index_domain}")
+    else:  # assumed constant
+        bdist = None  # TODO : generate a dist of B
+
+    if adist is not None and bdist is None:
+        bdist = strat.map(b)
+    if bdist is not None and adist is None:
+        adist = strat.map(a)
+
+    # TODO : A simpler way to check search strategy equality
+    # sampled = [draw(adist)]
+
+    return adist == bdist  # TODO : generate a composite strategy instead...
+
+
 def int_class(permadb: TinyDB):
 
     class Int:
-
+        # classvar is cleaner than playing with metaclasses
         db: typing.ClassVar[TinyDB] = permadb
         table: typing.ClassVar[typing.Any] = db.table("Int")  # TODO : type table properly ?
         
         def __init__(self, fun: typing.Union[int, typing.Callable[[typing.Hashable], int]]):
-            self.value = fun
 
-            if callable(self.value):
-                self.name = self.value.__qualname__
-                # retrieve stored cache for this callable
-                q = tinydb.Query()
-                assert self.table.count(q.name == self.name) in (0, 1)  # TODO otherwise delete it ???
-                self.cache_doc = self.table.get(q.name == self.name)
+            # assert not fun.__closure__  # make sure it is not a closure -> no side effect in code => can be cached
+            # how about constant values in closure ? but they can change without being rflected in the bytecode...
 
-                if self.cache_doc is None:
-                    # store in type table
-                    # TODO : refine runsig... maybe with versioning ? or datetime ?
-                    cache_id = self.table.insert({'run': runsig.hex, 'name': self.name, 'bytecode': [i for i in dis.get_instructions(self.value)], 'cache': {}})
-                    self.cache_doc = self.table.get(doc_id=cache_id)
+            self.value = fun if callable(fun) else lambda _: fun  # make it a callable to treat everything the same.
+            # Having special cases for a constant is an optimization.
 
-                else:  # retrieving old callable cache...
-                    # name is same as per the query
-                    assert self.cache_doc['name'] == self.name
+            funspec = inspect.getfullargspec(self.value)
+            self.index_domain = funspec.annotations.get(funspec.args[0])
+            # TODO : validate index_domain ?
 
-                    # compare bytecode:
-                    oldv = self.cache_doc['bytecode']
-                    current_bytecode = [i for i in dis.get_instructions(self.value)]
+            self.name = self.value.__qualname__ + ("_[" + "_".join(str(cv.cell_contents) for cv in self.value.__closure__) + "]_") if self.value.__closure__ else ""
+            # retrieve stored cache for this callable
+            q = tinydb.Query()
+            assert self.table.count(q.name == self.name) in (0, 1)  # TODO otherwise delete it ???
+            self.cache_doc = self.table.get(q.name == self.name)
 
-                    if runsig.hex == self.cache_doc['run']:  # this run !
-                        raise RuntimeError(" Two functions with same name have been identified ! This will prevent storing caches. Fix it !")  # TODO : improve
-                    elif oldv != current_bytecode:  # we assume named function has been replaced
-                        self.cache_doc['bytecode'] = current_bytecode
-                        self.cache_doc['cache'] = {}  # erasing cache
-                        self.table.write_back([self.cache_doc])
+            if self.cache_doc is None:
+                # store in type table
+                # TODO : refine runsig... maybe with versioning ? or datetime ?
+                cache_id = self.table.insert({'run': runsig.hex, 'name': self.name, 'bytecode': [str(i) for i in dis.get_instructions(self.value)], 'cache': {}})
+                self.cache_doc = self.table.get(doc_id=cache_id)
 
-                self.cache = self.cache_doc['cache']  # reference !
+            else:  # retrieving old callable cache...
+                # name is same as per the query
+                assert self.cache_doc['name'] == self.name
+
+                # compare bytecode:
+                current_bytecode = [str(i) for i in dis.get_instructions(self.value)]
+
+                if runsig.hex == self.cache_doc['run'] and current_bytecode != self.cache_doc['bytecode']:  # this run !
+                    # TODO : Need improvement, what about higher order functions + imperative closures ??!!
+                    # => related with functional implicitely guaranteed by cache ??
+                    raise RuntimeError(" Two functions with same name have been identified ! Caches will be mixed !")  # TODO : improve
+                elif self.cache_doc['bytecode'] != current_bytecode:  # we assume named function has been erased and replaced
+                    self.cache_doc['bytecode'] = current_bytecode
+                    self.cache_doc['cache'] = {}  # erasing cache
+                    self.table.write_back([self.cache_doc])
+
+            self.cache = self.cache_doc['cache']  # reference !
+
+        def __eq__(self, other):
+            if not isinstance(other, Int):
+                return False  # different types, NO implicit cast/coerce
+            else:
+                # TODO : maybe better to do this by leveraging getitem [] for simplicity ??
+                if self.cache.keys() <= other.cache.keys():
+                    # check equality on existing values
+                    eq = all(v == other.cache[s] for s, v in self.cache.items())
+                    if not eq:
+                        return False  # early exit
+                    # add required values to finish comparison
+                    for s in other.cache.keys() - self.cache.keys():
+                        eq = eq and other[s] == self[s]
+                elif other.cache.keys() <= self.cache.keys():
+                    # check equality on existing values
+                    eq = all(v == self.cache[o] for o, v in other.cache.items())
+                    if not eq:
+                        return False  # early exit
+                    # add required values to finish comparison
+                    for s in self.cache.keys() - other.cache.keys():
+                        eq = eq and self[s] == other[s]
+                else:
+                    return False  # cannot be equal
 
         def __getitem__(self, item: typing.Hashable):
-            if isinstance(self.value, int):
-                return self.value
+            if isinstance(self.value, int):  # TODO : remove if we use lambda instead of constant
+                return self.value  # TODO : or self ?? what about equality ??
             elif len(inspect.getfullargspec(self.value).args) == 0:
                 return self.value()  #ignoring arg if not present.
             else:
@@ -202,9 +287,11 @@ def int_class(permadb: TinyDB):
                     return self.cache[item]
                 else:  # TODO : progressive cache... only cache after n tries in some time interval...
                     self.cache[item] = self.value(item)
-                    # store cache in DB
-                    self.table.write_back([self.cache_doc])
-
+                    try:
+                        # store cache in DB
+                        self.table.write_back([self.cache_doc])
+                    except TypeError:
+                        raise
                 # TODO: async passive verification on non-cached version...
                 return self.cache[item]
 
@@ -218,6 +305,10 @@ def int_class(permadb: TinyDB):
 
         def __setstate__(self, state):
             self.value = state
+
+        # delegating everything else to the internal value for transparent usage
+        def __getattr__(self, item):
+            return getattr(self.value, item)
 
     return Int
 
@@ -336,7 +427,7 @@ if __name__ == '__main__':
 
 
     @data(permadb=TinyDB("data_test.json"))
-    def fun() -> int:
+    def funbis() -> int:
         return 3
 
     v = fun[39]
@@ -347,7 +438,7 @@ if __name__ == '__main__':
     assert v == w
 
     # And they can be used as usual class instance
-    assert v.value == 42
+    assert v == 42
 
     dv = data(permadb=TinyDB("data_test.json"))(42)
 
